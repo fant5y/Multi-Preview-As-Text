@@ -1,0 +1,2 @@
+MAIN_CATEGORY = "👩‍🦰fant5y"
+NODES_PREFIX = f"[{MAIN_CATEGORY}] - "
