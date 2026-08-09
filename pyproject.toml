@@ -1,5 +1,5 @@
 [project]
-name = "multi_preview_as_text"
+name = "Multi-Preview-as-Text"
 version = "0.0.1"
 description = "Preview as Text with multiple inputs"
 authors = [
@@ -32,7 +32,7 @@ Documentation = "https://github.com/fant5y/multi_preview_as_text/wiki"
 [tool.comfy]
 PublisherId = "fant5y"
 DisplayName = "ComfyUI-MultiPreviewAsText"
-Icon = ""
+Icon = "👩‍🦰"
 Tags = []
 Repository = "https://github.com/fant5y/multi_preview_as_text"
 
