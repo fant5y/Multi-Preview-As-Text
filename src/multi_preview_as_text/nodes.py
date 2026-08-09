@@ -4,18 +4,13 @@ from .any_to_string import AnyToString
 from .extract_info import ExtractInfo
 from .extract_info_plus import ExtractInfoPlus
 from .multi_preview_any import MultiPreviewAny
+from .resolution_selector_extended import ResolutionSelectorExtended
 
 
 class MyCustomSuiteExtension(ComfyExtension):
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         # Return all nodes belonging to this package
-        return [
-            MultiPreviewAny,
-            ExtractInfoPlus,
-            ExtractInfo,
-            AnyToString
-
-        ]
+        return [MultiPreviewAny, ExtractInfoPlus, ExtractInfo, AnyToString, ResolutionSelectorExtended]
 
 # ComfyUI V3 will look for this exact function name to load your entire suite
 async def comfy_entrypoint() -> ComfyExtension:
