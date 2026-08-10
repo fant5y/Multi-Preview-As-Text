@@ -7,9 +7,8 @@ megapixels, and multiple so they can be reused by downstream nodes.
 
 import math
 
-from comfy_api.latest import ComfyExtension, io
 from typing_extensions import override
-
+from comfy_api.latest import ComfyExtension, io
 from .constants import MAIN_CATEGORY
 
 # label -> (ratio_width, ratio_height)
@@ -28,9 +27,25 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "1:3 (Tall Panorama)": (1, 3),
 }
 
-MULTIPLE = [1, 8, 16, 32, 64, 128, 256]
+MULTIPLE = [1,8,16,32,64,128,256]
 
 PIXELS_PER_MEGAPIXEL = 1024 * 1024
+
+CUSTOM_PRESET_LABEL = "Custom (use megapixels slider)"
+
+# label -> reference (width, height) used only to derive a target pixel count.
+# The actual output shape still comes from the aspect_ratio input - e.g. "4K UHD"
+# gives the real 3840x2160 at 16:9, but the same pixel budget (~8.29 MP) at 1:1
+# becomes a ~2880x2880 square. None is the sentinel for "use the megapixels slider".
+RESOLUTION_PRESETS: dict[str, tuple[int, int] | None] = {
+    CUSTOM_PRESET_LABEL: None,
+    "SD (480p)": (640, 480),
+    "HD (720p)": (1280, 720),
+    "FHD (1080p)": (1920, 1080),
+    "QHD (1440p)": (2560, 1440),
+    "4K (2160p)": (3840, 2160),
+    "8K (4320p)": (7680, 4320),
+}
 
 
 class ResolutionSelectorExtended(io.ComfyNode):
@@ -49,6 +64,11 @@ class ResolutionSelectorExtended(io.ComfyNode):
             ),
             inputs=[
                 io.Combo.Input(
+                    "preset",
+                    options=list(RESOLUTION_PRESETS.keys()),
+                    default=CUSTOM_PRESET_LABEL,
+                ),
+                io.Combo.Input(
                     "aspect_ratio",
                     options=list(ASPECT_RATIOS.keys()),
                     default="1:1 (Square)",
@@ -65,6 +85,25 @@ class ResolutionSelectorExtended(io.ComfyNode):
                     options=MULTIPLE,
                     default=32,
                 ),
+                io.String.Input(
+                    "aspect_ratio_override",
+                    optional=True,
+                    force_input=True,
+                    tooltip=(
+                        "Optional: connect a STRING (e.g. another instance's "
+                        "aspect_ratio_string output) to override the aspect_ratio "
+                        "dropdown above."
+                    ),
+                ),
+                io.Int.Input(
+                    "multiple_override",
+                    optional=True,
+                    force_input=True,
+                    tooltip=(
+                        "Optional: connect an INT (e.g. another instance's "
+                        "multiple_out output) to override the multiple dropdown above."
+                    ),
+                ),
             ],
             outputs=[
                 io.Int.Output("width"),
@@ -77,17 +116,46 @@ class ResolutionSelectorExtended(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, aspect_ratio: str, megapixels: float, multiple: int) -> io.NodeOutput:
+    def execute(
+        cls,
+        preset: str,
+        aspect_ratio: str,
+        megapixels: float,
+        multiple: int,
+        aspect_ratio_override: str = None,
+        multiple_override: int = None,
+    ) -> io.NodeOutput:
+        if aspect_ratio_override:
+            if aspect_ratio_override not in ASPECT_RATIOS:
+                raise ValueError(
+                    f"aspect_ratio_override {aspect_ratio_override!r} is not a "
+                    f"known aspect ratio label. Valid options: {list(ASPECT_RATIOS)}"
+                )
+            aspect_ratio = aspect_ratio_override
+
+        if multiple_override is not None:
+            if multiple_override <= 0:
+                raise ValueError("multiple_override must be a positive integer.")
+            multiple = multiple_override
+
         ratio_width, ratio_height = ASPECT_RATIOS[aspect_ratio]
-        target_pixel_count = megapixels * PIXELS_PER_MEGAPIXEL
         aspect_ratio_float = ratio_width / ratio_height
+
+        preset_reference = RESOLUTION_PRESETS[preset]
+        if preset_reference is not None:
+            reference_width, reference_height = preset_reference
+            megapixels = (reference_width * reference_height) / PIXELS_PER_MEGAPIXEL
+
+        target_pixel_count = megapixels * PIXELS_PER_MEGAPIXEL
         raw_height = math.sqrt(target_pixel_count * ratio_height / ratio_width)
         raw_width = raw_height * ratio_width / ratio_height
 
         width = cls._round_to_multiple(raw_width, multiple)
         height = cls._round_to_multiple(raw_height, multiple)
 
-        return io.NodeOutput(width, height, aspect_ratio, aspect_ratio_float, megapixels, multiple)
+        return io.NodeOutput(
+            width, height, aspect_ratio, aspect_ratio_float, megapixels, multiple
+        )
 
     @staticmethod
     def _round_to_multiple(value: float, multiple: int) -> int:
