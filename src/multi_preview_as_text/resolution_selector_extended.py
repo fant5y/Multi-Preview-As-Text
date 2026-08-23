@@ -7,27 +7,49 @@ megapixels, and multiple so they can be reused by downstream nodes.
 
 import math
 
-from typing_extensions import override
 from comfy_api.latest import ComfyExtension, io
+from typing_extensions import override
+
 from .constants import MAIN_CATEGORY
 
 # label -> (ratio_width, ratio_height)
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
-    "1:1 (Square)": (1, 1),
-    "3:2 (Photo Format)": (3, 2),
-    "4:3 (Standard Format)": (4, 3),
-    "5:4 (Canvas Format)": (5, 4),
-    "16:9 (Widescreen)": (16, 9),
-    "21:9 (Ultrawide)": (21, 9),
-    "3:1 (Panorama)": (3, 1),
+    # --- Portrait Formats ---
+    "9:32 (Super Ultrawide)": (9, 32),
+    "1:3 (Tall Panorama)": (1, 3),
+    "9:24 (Full-Frame)": (9, 24),
+    "1:2.39 (35mm Anamorphic)": (1, 2.39),
+    "9:21 (Ultrawide Portrait)": (9, 21),
+    "9:19.5 (Smartphone)":(9, 19.5),
+    "1:1.91 (Social Feed)": (1, 1.91),
+    "1:1.85 (American Widescreen)": (1, 1.85),
+    "9:16 (Tall Portrait)": (9, 16),
+    "10:16 (Golden Ratio)": (10, 16),
+    "5:8 (Golden Ratio)": (5, 8),
     "2:3 (Medium Portrait)": (2, 3),
+    "5:7 (International Portrait)": (5, 7),
     "3:4 (Standard Portrait)": (3, 4),
     "4:5 (Canvas Portrait)": (4, 5),
-    "9:16 (Tall Portrait)": (9, 16),
-    "1:3 (Tall Panorama)": (1, 3),
+    # --- Square Formats ---
+    "1:1 (Square)": (1, 1),
+    # --- Landscape Formats ---
+    "5:4 (Canvas Format)": (5, 4),
+    "4:3 (Standard Format)": (4, 3),
+    "7:5 (International Print)": (7, 5),
+    "3:2 (Medium Landscape)": (3, 2),
+    "8:5 (Golden Ratio)": (8, 5),
+    "16:10 (Golden Ratio)": (16, 10),
+    "16:9 (Widescreen)": (16, 9),
+    "1.85:1 (American Widescreen)": (1.85, 1),
+    "1.91:1 (Social Feed)": (1.91, 1),
+    "19.5:9 (Smartphone)": (19.5, 9),
+    "21:9 (Ultrawide)": (21, 9),
+    "2.39:1 (35mm Anamorphic)": (2.39, 1),
+    "24:9 (Full-Frame)": (24,9),
+    "3:1 (Panorama)": (3, 1),
+    "32:9 (Super Ultrawide)": (32, 9),
 }
-
-MULTIPLE = [1,8,16,32,64,128,256]
+MULTIPLE = [1, 8, 16, 32, 64, 128, 256]
 
 PIXELS_PER_MEGAPIXEL = 1024 * 1024
 
@@ -66,7 +88,7 @@ class ResolutionSelectorExtended(io.ComfyNode):
                 io.Combo.Input(
                     "preset",
                     options=list(RESOLUTION_PRESETS.keys()),
-                    default=CUSTOM_PRESET_LABEL,
+                    default="HD (720p)",
                 ),
                 io.Combo.Input(
                     "aspect_ratio",
@@ -100,8 +122,7 @@ class ResolutionSelectorExtended(io.ComfyNode):
                     optional=True,
                     force_input=True,
                     tooltip=(
-                        "Optional: connect an INT (e.g. another instance's "
-                        "multiple_out output) to override the multiple dropdown above."
+                        "Optional: connect an INT (e.g. another instance's multiple_out output) to override the multiple dropdown above."
                     ),
                 ),
             ],
@@ -153,9 +174,7 @@ class ResolutionSelectorExtended(io.ComfyNode):
         width = cls._round_to_multiple(raw_width, multiple)
         height = cls._round_to_multiple(raw_height, multiple)
 
-        return io.NodeOutput(
-            width, height, aspect_ratio, aspect_ratio_float, megapixels, multiple
-        )
+        return io.NodeOutput(width, height, aspect_ratio, aspect_ratio_float, megapixels, multiple)
 
     @staticmethod
     def _round_to_multiple(value: float, multiple: int) -> int:

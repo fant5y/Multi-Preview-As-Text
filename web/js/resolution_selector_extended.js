@@ -2,18 +2,40 @@ import { app } from "../../scripts/app.js";
 
 // Must stay in sync with ASPECT_RATIOS in resolution_selector_extended.py
 const ASPECT_RATIOS = {
-    "1:1 (Square)": [1, 1],
-    "3:2 (Photo Format)": [3, 2],
-    "4:3 (Standard Format)": [4, 3],
-    "5:4 (Canvas Format)": [5, 4],
-    "16:9 (Widescreen)": [16, 9],
-    "21:9 (Ultrawide)": [21, 9],
-    "3:1 (Panorama)": [3, 1],
+    // --- Portrait Formats ---
+    "9:32 (Super Ultrawide)": [9, 32],
+    "1:3 (Tall Panorama)": [1, 3],
+    "9:24 (Full-Frame)": [9,24],
+    "1:2.39 (35mm Anamorphic)": [1, 2.39],
+    "9:21 (Ultrawide Portrait)": [9, 21],
+    "9:19.5 (Smartphone)":[9, 19.5],
+    "1:1.91 (Social Feed)": [1, 1.91],
+    "1:1.85 (American Widescreen)": [1, 1.85],
+    "9:16 (Tall Portrait)": [9, 16],
+    "10:16 (Golden Ratio)": [10, 16],
+    "5:8 (Golden Ratio)": [5, 8],
     "2:3 (Medium Portrait)": [2, 3],
+    "5:7 (International Portrait)": [5, 7],
     "3:4 (Standard Portrait)": [3, 4],
     "4:5 (Canvas Portrait)": [4, 5],
-    "9:16 (Tall Portrait)": [9, 16],
-    "1:3 (Tall Panorama)": [1, 3],
+    // --- Square Formats ---
+    "1:1 (Square)": [1, 1],
+    // --- Landscape Formats ---
+    "5:4 (Canvas Format)": [5, 4],
+    "4:3 (Standard Format)": [4, 3],
+    "7:5 (International Print)": [7, 5],
+    "3:2 (Medium Landscape)": [3, 2],
+    "8:5 (Golden Ratio)": [8, 5],
+    "16:10 (Golden Ratio)": [16, 10],
+    "16:9 (Widescreen)": [16, 9],
+    "1.85:1 (American Widescreen)": [1.85, 1],
+    "1.91:1 (Social Feed)": [1.91, 1],
+    "19.5:9 (Smartphone)": [19.5, 9],
+    "21:9 (Ultrawide)": [21, 9],
+    "2.39:1 (35mm Anamorphic)": [2.39, 1],
+    "24:9 (Full-Frame)": [24, 9],
+    "3:1 (Panorama)": [3, 1],
+    "32:9 (Super Ultrawide)": [32, 9]
 };
 
 const PIXELS_PER_MEGAPIXEL = 1024 * 1024;
