@@ -1,5 +1,4 @@
 import { app } from "../../scripts/app.js";
-import { ComfyWidgets } from "../../scripts/widgets.js";
 
 app.registerExtension({
     name: "multipreviewastext.MultiPreviewAny",
@@ -16,19 +15,11 @@ app.registerExtension({
             }
 
             this.resizable = true;
-            update_dynamic_inputs(this);
-
             try {
-                const { widget } = ComfyWidgets["STRING"](
-                    this,
-                    "preview_output",
-                    ["STRING", { multiline: true }],
-                    app
-                );
-                widget.inputEl.readOnly = true;
-                widget.inputEl.style.overflow = "auto";
-                widget.serialize = false;
-                widget.value = "(no output)";
+                create_preview_widget(this);
+                update_dynamic_inputs(this);
+                // Discard the temporary height allocated for the 100 schema outputs.
+                this.setSize(this.computeSize());
             } catch (error) {
                 console.error("[MultiPreviewAny] onNodeCreated error:", error);
             }
@@ -40,11 +31,7 @@ app.registerExtension({
             const text_widget = this.widgets?.find(w => w.name === "preview_output");
             if (text_widget) {
                 text_widget.value = "(no output)";
-                if (text_widget.inputEl) {
-                    text_widget.inputEl.style.height = "60px";
-                }
             }
-            // This now guarantees labels are fixed immediately on load!
             update_dynamic_inputs(this);
         };
 
@@ -53,17 +40,31 @@ app.registerExtension({
                 const text_widget = this.widgets?.find(w => w.name === "preview_output");
                 if (!text_widget) return;
 
-                text_widget.value = message?.text?.[0] ?? "(no output)";
+                text_widget.setPreviewEntries(get_preview_entries(this, message));
 
                 requestAnimationFrame(() => {
-                    if (text_widget.inputEl) {
-                        text_widget.inputEl.style.height = "auto";
-                        const target_height = text_widget.inputEl.scrollHeight;
-                        const slot_height = 22;
-                        const overhead = 30 + (this.inputs?.length || 0) * slot_height + 12;
-                        this.setSize([this.size[0], overhead + target_height]);
-                        this.setDirtyCanvas(true, true);
+                    const input_el = text_widget.element;
+                    if (!input_el) return;
+
+                    const context = document.createElement("canvas").getContext("2d");
+                    context.font = getComputedStyle(input_el).font;
+                    let text_width = 0;
+                    for (const line of text_widget.value.split("\n")) {
+                        text_width = Math.max(text_width, context.measureText(line).width);
                     }
+                    const minimum_size = this.computeSize();
+                    this.setSize([
+                        Math.max(this.size[0], minimum_size[0], Math.min(1000, Math.max(400, Math.ceil(text_width) + 80))),
+                        Math.max(this.size[1], minimum_size[1]),
+                    ]);
+                    this.setDirtyCanvas(true, true);
+
+                    // Let ComfyUI lay out the wider textarea before measuring wrapped lines.
+                    requestAnimationFrame(() => {
+                        const overflow = Math.max(0, input_el.scrollHeight - input_el.clientHeight);
+                        this.setSize([this.size[0], this.size[1] + overflow]);
+                        this.setDirtyCanvas(true, true);
+                    });
                 });
 
             } catch (error) {
@@ -71,13 +72,39 @@ app.registerExtension({
             }
         };
 
-        nodeType.prototype.onResize = function (size) {
-            const text_widget = this.widgets?.find(w => w.name === "preview_output");
-            if (!text_widget?.inputEl) return;
-            const slot_height = 22;
-            const overhead = 30 + (this.inputs?.length || 0) * slot_height + 12;
-            const available_height = Math.max(60, size[1] - overhead);
-            text_widget.inputEl.style.height = `${available_height}px`;
+        const original_onConnectInput = nodeType.prototype.onConnectInput;
+        nodeType.prototype.onConnectInput = function (slot_index, type, output, origin_node, origin_slot) {
+            const allowed = original_onConnectInput?.apply(this, arguments);
+            if (allowed === false || this.swapping_inputs) return allowed;
+
+            const graph = this.graph ?? app.graph;
+            const displaced_link = graph?.links[this.inputs[slot_index]?.link];
+            const moving_link = app.canvas?.linkConnector?.renderLinks?.find(link =>
+                link.toType === "input" && link.inputNode === this &&
+                link.outputNode === origin_node && link.outputIndex === origin_slot
+            );
+            const previous_slot = this.inputs.indexOf(moving_link?.inputSlot);
+            if (previous_slot < 0 || previous_slot === slot_index ||
+                this.inputs[previous_slot].link != null) return allowed;
+
+            if (displaced_link) {
+                // Fill the vacated slot before LiteGraph replaces the destination wire.
+                this.swapping_inputs = true;
+                try {
+                    const displaced_origin = graph.getNodeById(displaced_link.origin_id);
+                    const restored = displaced_origin?.connect(
+                        displaced_link.origin_slot, this, previous_slot, displaced_link.parentId
+                    );
+                    if (!restored) return false;
+                } finally {
+                    this.swapping_inputs = false;
+                }
+            }
+            this.pending_output_move = {
+                from: previous_slot, to: slot_index,
+                origin_id: origin_node.id, origin_slot,
+            };
+            return allowed;
         };
 
         const original_onConnectionsChange = nodeType.prototype.onConnectionsChange;
@@ -85,20 +112,226 @@ app.registerExtension({
             connection_type, slot_index, is_connected, link_info, input_info
         ) {
             if (this.ignore_connections_change) return;
-            this.ignore_connections_change = true;
+            original_onConnectionsChange?.apply(this, arguments);
 
-            try {
-                original_onConnectionsChange?.apply(this, arguments);
-                // We let update_dynamic_inputs handle ALL the naming now!
-                update_dynamic_inputs(this);
-            } finally {
-                this.ignore_connections_change = false;
+            if (connection_type === 1 && !is_connected && this.inputs?.[slot_index]) {
+                this.inputs[slot_index].type = "*";
             }
+            if (this.connection_update_pending) return;
+            this.connection_update_pending = true;
+
+            const finish_update = () => {
+                // Keep slot objects and indices stable until LiteGraph finishes moving the wire.
+                if (app.canvas?.linkConnector?.isConnecting) {
+                    requestAnimationFrame(finish_update);
+                    return;
+                }
+                this.connection_update_pending = false;
+                this.ignore_connections_change = true;
+                try {
+                    const move = this.pending_output_move;
+                    delete this.pending_output_move;
+                    const graph = this.graph ?? app.graph;
+                    const destination = move && graph?.links[this.inputs[move.to]?.link];
+                    if (destination && destination.origin_id === move.origin_id &&
+                        destination.origin_slot === move.origin_slot) {
+                        // Native links are read by slot index, so capture them before moving outputs.
+                        const from_links = [...(this.outputs[move.from]?.links || [])];
+                        const to_links = [...(this.outputs[move.to]?.links || [])];
+                        [this.outputs[move.from], this.outputs[move.to]] =
+                            [this.outputs[move.to], this.outputs[move.from]];
+                        for (const [index, link_ids] of [[move.to, from_links], [move.from, to_links]]) {
+                            for (const link_id of link_ids) {
+                                const link = graph.links[link_id];
+                                if (link) link.origin_slot = index;
+                            }
+                        }
+                    }
+                    update_dynamic_inputs(this);
+                } finally {
+                    this.ignore_connections_change = false;
+                }
+            };
+            requestAnimationFrame(finish_update);
         };
     },
 });
 
+function create_preview_widget(node) {
+    const container = document.createElement("div");
+    container.className = "multi-preview-panels";
+    Object.assign(container.style, {
+        display: "flex", flexDirection: "column", gap: "10px", height: "100%",
+        minHeight: "0", overflow: "auto", boxSizing: "border-box", paddingBottom: "12px",
+        font: "15px monospace", color: "var(--input-text, #ddd)",
+    });
+    const toolbar = document.createElement("div");
+    Object.assign(toolbar.style, { display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: "8px", flexShrink: "0" });
+    const panels = document.createElement("div");
+    Object.assign(panels.style, { display: "flex", flexDirection: "column", gap: "12px", flexShrink: "0" });
+    const state = { value: "(no output)", entries: [{ header: "", text: "(no output)" }], folded: new Set() };
+    const copy_all = create_copy_button("Copy all", () => state.value);
+    copy_all.className = "multi-preview-copy-all";
+    const fold_all = create_preview_button("Fold all");
+    fold_all.className = "multi-preview-fold-all";
+    const unfold_all = create_preview_button("Unfold all");
+    unfold_all.className = "multi-preview-unfold-all";
+    const set_all_open = open => {
+        for (const panel of panels.children) {
+            if (panel.tagName !== "DETAILS") continue;
+            panel.open = open;
+            if (open) state.folded.delete(panel.dataset.header);
+            else state.folded.add(panel.dataset.header);
+        }
+    };
+    fold_all.addEventListener("click", () => set_all_open(false));
+    unfold_all.addEventListener("click", () => set_all_open(true));
+    toolbar.append(fold_all, unfold_all, copy_all);
+    container.append(toolbar, panels);
+    container.addEventListener("pointerdown", event => event.stopPropagation());
+    container.addEventListener("contextmenu", event => event.stopPropagation());
+    container.addEventListener("wheel", event => {
+        if (!event.ctrlKey && container.scrollHeight > container.clientHeight) event.stopPropagation();
+    });
+
+    const render = () => {
+        panels.replaceChildren();
+        for (const entry of state.entries) {
+            const panel = document.createElement(entry.header ? "details" : "section");
+            panel.className = "multi-preview-panel";
+            Object.assign(panel.style, {
+                border: `1px solid ${entry.color || "#555"}`, borderLeftWidth: "3px",
+                borderRadius: "5px", background: "var(--comfy-input-bg, #222)", overflow: "hidden",
+            });
+            if (entry.header) {
+                panel.dataset.header = entry.header;
+                panel.open = !state.folded.has(entry.header);
+                const header = document.createElement("summary");
+                Object.assign(header.style, {
+                    display: "flex", alignItems: "flex-start", gap: "12px", padding: "10px 12px",
+                    borderBottom: "1px solid #ffffff18", background: "#ffffff06", cursor: "pointer",
+                });
+                const title = document.createElement("span");
+                title.textContent = entry.header;
+                Object.assign(title.style, { flex: "1", minWidth: "0", overflowWrap: "anywhere", color: entry.color || "inherit" });
+                const arrow = document.createElement("span");
+                arrow.textContent = panel.open ? "▾" : "▸";
+                arrow.setAttribute("aria-hidden", "true");
+                panel.addEventListener("toggle", () => {
+                    if (panel.open) state.folded.delete(entry.header);
+                    else state.folded.add(entry.header);
+                    arrow.textContent = panel.open ? "▾" : "▸";
+                    header.style.borderBottomColor = panel.open ? "#ffffff18" : "transparent";
+                });
+                header.append(arrow, title, create_copy_button("Copy", () => entry.text));
+                panel.append(header);
+            }
+            const content = document.createElement("pre");
+            content.className = "multi-preview-content";
+            content.textContent = entry.text;
+            Object.assign(content.style, {
+                margin: "0", padding: "12px 12px 16px", whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere", userSelect: "text", cursor: "text", font: "inherit", lineHeight: "1.45",
+            });
+            panel.append(content);
+            panels.append(panel);
+        }
+    };
+    const widget = node.addDOMWidget("preview_output", "multi-preview-panels", container, {
+        serialize: false,
+        getMinHeight: () => 100,
+        getValue: () => state.value,
+        setValue: value => {
+            state.value = String(value ?? "");
+            state.entries = [{ header: "", text: state.value }];
+            render();
+        },
+    });
+    widget.serialize = false;
+    widget.setPreviewEntries = entries => {
+        const current_headers = new Set(entries.map(entry => entry.header));
+        for (const header of state.folded) {
+            if (!current_headers.has(header)) state.folded.delete(header);
+        }
+        state.entries = entries;
+        state.value = entries.map(entry => entry.header ? `${entry.header}\n\n${entry.text}` : entry.text).join("\n\n---\n\n");
+        render();
+    };
+    render();
+    return widget;
+}
+
+function create_preview_button(label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    Object.assign(button.style, {
+        flexShrink: "0", padding: "4px 10px", border: "1px solid #ffffff35", borderRadius: "4px",
+        background: "var(--comfy-menu-bg, #333)", color: "inherit", cursor: "pointer", font: "14px sans-serif",
+    });
+    return button;
+}
+
+function create_copy_button(label, get_text) {
+    const button = create_preview_button(label);
+    button.title = label === "Copy" ? "Copy this input's content" : "Copy every preview, including headers";
+    button.addEventListener("click", async event => {
+        event.stopPropagation();
+        const text = get_text();
+        try {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch {
+                const fallback = document.createElement("textarea");
+                fallback.value = text;
+                Object.assign(fallback.style, { position: "fixed", left: "-10000px", top: "0" });
+                document.body.append(fallback);
+                try {
+                    fallback.select();
+                    if (!document.execCommand("copy")) throw new Error("Copy failed");
+                } finally {
+                    fallback.remove();
+                }
+            }
+            button.textContent = "Copied";
+        } catch {
+            button.textContent = "Select text to copy";
+        }
+        setTimeout(() => { button.textContent = label; }, 1800);
+    });
+    return button;
+}
+
+function get_preview_entries(node, message) {
+    const raw_entries = Array.isArray(message?.entries) ? message.entries :
+        (message?.text?.[0] ?? "(no output)").split(/\n\n---\n\n(?=\[source_\d+(?: \||\]))/).map(block => {
+            const boundary = block.indexOf("\n\n");
+            return block.startsWith("[source_") && boundary >= 0
+                ? { header: block.slice(0, boundary), text: block.slice(boundary + 2) }
+                : { header: "", text: block };
+        });
+    if (!raw_entries.length) return [{ header: "", text: message?.text?.[0] ?? "(no inputs connected)" }];
+    return raw_entries.map(entry => {
+        const match = entry.header?.match(/^\[source_(\d+) \| (.*) \(#([^)]+)\) › slot (\d+) \| TYPE: (.*?) \]$/);
+        if (!match) return { header: entry.header || "", text: entry.text };
+        const [, index, title, node_id, output_slot, type] = match;
+        const graph = node.graph ?? app.graph;
+        const origin = graph?.getNodeById(node_id);
+        const output = origin?.outputs?.[Number(output_slot)];
+        const name = output?.label || output?.name || output?.type || "Input";
+        const socket_type = output?.type || node.outputs?.[Number(index)]?.type || "*";
+        return {
+            header: `${index} - ${name} | ${title} (#${node_id}) | TYPE: ${type}`,
+            text: entry.text,
+            color: app.canvas.colourGetter.getConnectedColor(socket_type),
+        };
+    });
+}
+
+
 function update_dynamic_inputs(node) {
+    // LiteGraph socket mutations can resize the node before this update finishes.
+    const previous_size = [...node.size];
     try {
         let inputs = node.inputs || [];
 
@@ -130,7 +363,13 @@ function update_dynamic_inputs(node) {
                 delete inputs[i].label;
             }
 
-            inputs[i].type = new_type;
+            // Keep inputs open to replacement values of any type.
+            inputs[i].type = "*";
+            if (is_input_connected) {
+                inputs[i].color_on = app.canvas.colourGetter.getConnectedColor(new_type);
+            } else {
+                delete inputs[i].color_on;
+            }
             if (node.outputs[i]) node.outputs[i].type = new_type;
 
             if (node.outputs[i] && node.outputs[i].links) {
@@ -178,6 +417,7 @@ function update_dynamic_inputs(node) {
             if (outputs[i] && outputs[i].name !== expected_name) outputs[i].name = expected_name;
 
             if (inputs[i].label) {
+                inputs[i].label = inputs[i].label.replace(/(?: \(\d+\))? (\(#[^)]+\))$/, ` (${i}) $1`);
                 if (outputs[i]) outputs[i].label = inputs[i].label;
             } else {
                 if (outputs[i]) delete outputs[i].label;
@@ -190,7 +430,10 @@ function update_dynamic_inputs(node) {
 
         if (node.computeSize) {
             const new_size = node.computeSize();
-            node.setSize([Math.max(node.size[0], new_size[0]), new_size[1]]);
+            node.setSize([
+                Math.max(previous_size[0], new_size[0]),
+                Math.max(previous_size[1], new_size[1]),
+            ]);
         }
         node.inputs = [...node.inputs];
     } catch (error) {

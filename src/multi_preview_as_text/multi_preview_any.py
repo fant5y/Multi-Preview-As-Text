@@ -1,6 +1,6 @@
 from comfy_api.latest import io
 from .any_type import AnyType
-from .constants import MAIN_CATEGORY
+from .constants import MAIN_CATEGORY, NODES_PREFIX
 from .utils import human_readable_repr
 
 
@@ -14,7 +14,7 @@ class MultiPreviewAny(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="MultiPreviewAny",
-            display_name="Multi Preview Any",
+            display_name=f"{NODES_PREFIX}Multi Preview Any As Text",
             category=f"{MAIN_CATEGORY}/utils",
             is_output_node=True,
             inputs=[
@@ -33,7 +33,7 @@ class MultiPreviewAny(io.ComfyNode):
         Process inputs and format them for UI preview.
         """
         if not kwargs:
-            return io.NodeOutput(*[], ui={"text": ("(no inputs connected)",)})
+            return io.NodeOutput(*[], ui={"text": ("(no inputs connected)",), "entries": []})
 
         prompt_data = cls.hidden.prompt
         my_node_id = cls.hidden.unique_id
@@ -58,6 +58,7 @@ class MultiPreviewAny(io.ComfyNode):
 
         values = [None] * (max_index + 1)
         output_lines = []
+        preview_entries = []
 
         for idx, key, value in source_pairs:
             values[idx] = value
@@ -77,11 +78,12 @@ class MultiPreviewAny(io.ComfyNode):
                     header = f"[{key} | {node_title} (#{upstream_id}) › slot {upstream_slot} | TYPE: {type_str} ]"
 
             serialized = human_readable_repr(value)
+            preview_entries.append({"header": header, "text": serialized})
             output_lines.append(f"{header}\n\n{serialized}")
 
         display_text = "\n\n---\n\n".join(output_lines) if output_lines else "(no inputs connected)"
 
-        return io.NodeOutput(*values, ui={"text": (display_text,)})
+        return io.NodeOutput(*values, ui={"text": (display_text,), "entries": preview_entries})
 # from comfy_api.latest import ComfyExtension, io
 #
 # from .any_type import AnyType
